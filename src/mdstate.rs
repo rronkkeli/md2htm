@@ -3,9 +3,6 @@
 use crate::writeto::*;
 use std::boxed::Box;
 
-/// Buffer size for output data
-const BUF_SIZE: usize = 16384;
-
 const TAG_P_O: &[u8; 3] = b"<p>";
 const TAG_P_C: &[u8; 4] = b"</p>";
 const TAG_CODEB_O: &[u8; 37] = b"<div class=\"code\"><code class=\"code\">";
@@ -18,6 +15,8 @@ const TAG_I_O: &[u8; 3] = b"<i>";
 const TAG_I_C: &[u8; 4] = b"</i>";
 const TAG_B_O: &[u8; 3] = b"<b>";
 const TAG_B_C: &[u8; 4] = b"</b>";
+const TAG_U_O: &[u8; 3] = b"<u>";
+const TAG_U_C: &[u8; 4] = b"</u>";
 
 /// Markdown states
 #[derive(Debug)]
@@ -135,7 +134,11 @@ impl MDS {
             previous: Option::None,
         };
 
-        let mut output: Vec<u8> = Vec::with_capacity(BUF_SIZE);
+        // HTML data output will be larger than Markdown data,
+        // so output buffer may be larger than the input buffer.
+        // This makes reallocation unlikely, resulting in faster
+        // processing speed.
+        let mut output: Vec<u8> = Vec::with_capacity(bytes.capacity() << 1);
 
         for byte in bytes {
             match byte {
@@ -172,13 +175,19 @@ impl MDS {
                             output.push(byte);
                         }
 
-                        State::Escape | State::Exclamation => {
+                        State::Escape => {
                             match byte {
                                 b'<' => output.write(b"&lt;"),
                                 b'>' => output.write(b"&gt;"),
                                 _ => output.push(byte),
                             }
 
+                            state_machine = state_machine.fall();
+                        }
+
+                        State::Exclamation => {
+                            output.push(b'!');
+                            output.push(byte);
                             state_machine = state_machine.fall();
                         }
 
@@ -272,9 +281,14 @@ impl MDS {
                 },
 
                 b'\\' => match state_machine.current {
-                    State::Escape | State::Exclamation => {
+                    State::Escape => {
                         output.push(byte);
                         state_machine = state_machine.fall();
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine = state_machine.fall().rise(State::Escape);
                     }
 
                     _ => state_machine = state_machine.rise(State::Escape),
@@ -301,7 +315,13 @@ impl MDS {
                         }
                     }
 
-                    State::Escape | State::Exclamation => {
+                    State::Escape => {
+                        output.push(byte);
+                        state_machine = state_machine.fall();
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
                         output.push(byte);
                         state_machine = state_machine.fall();
                     }
@@ -358,97 +378,101 @@ impl MDS {
                     }
                 },
 
-                b' ' => {
-                    match state_machine.current {
-                        State::None => {
-                            // Open intend div tag
-                            output.write(TAG_INT_O);
-                            state_machine = state_machine
-                                .rise(State::Intendation(false, IntenData { inner: Vec::new() }));
-                        }
-
-                        State::Header(n, p) => {
-                            if !p {
-                                output.push(b'<');
-                                output.push(b'h');
-                                output.push(n + 48);
-                                output.push(b'>');
-
-                                state_machine.current = State::Header(n, true);
-                            } else {
-                                output.push(byte);
-                            }
-                        }
-
-                        State::Code(prev, count) => {
-                            if prev {
-                                match count {
-                                    1 => {
-                                        output.write(TAG_CODEI_O);
-                                        output.push(byte);
-                                        state_machine.current = State::Code(false, count);
-                                    }
-
-                                    3 => {
-                                        output.write(TAG_CODEB_O);
-                                        output.push(byte);
-                                        state_machine.current = State::Code(false, count);
-                                    }
-
-                                    _ => {
-                                        // No reason to push code block if it is empty
-                                        // so we jusp push the character literal to output
-                                        state_machine = state_machine.fall();
-                                        output.push(byte);
-                                    }
-                                }
-                            } else {
-                                output.push(byte);
-                            }
-                        }
-
-                        State::Italic(true) => {
-                            output.write(TAG_I_O);
-                            output.push(byte);
-                            state_machine.current = State::Italic(false);
-                        }
-
-                        State::Bold(true) => {
-                            output.write(TAG_B_O);
-                            output.push(byte);
-                            state_machine.current = State::Bold(false);
-                        }
-
-                        State::Link(ref mut ld) => {
-                            if ld.status.is_link() {
-                                // Convert space into url encoded space
-                                output.write(b"%20");
-                            } else {
-                                if ld.status.alt_expects_url() {
-                                    output.push(b'[');
-                                    output.write(&ld.alt);
-                                    output.push(b']');
-                                    output.push(byte);
-
-                                    state_machine = state_machine.fall();
-                                } else {
-                                    ld.alt.push(byte);
-                                }
-                            }
-                        }
-
-                        State::Intendation(_, b) => {
-                            state_machine.current = State::Intendation(false, b);
-                        }
-
-                        State::Escape | State::Exclamation => {
-                            output.push(byte);
-                            state_machine = state_machine.fall();
-                        }
-
-                        _ => output.push(byte),
+                b' ' => match state_machine.current {
+                    State::None => {
+                        // Open intend div tag
+                        output.write(TAG_INT_O);
+                        state_machine = state_machine
+                            .rise(State::Intendation(false, IntenData { inner: Vec::new() }));
                     }
-                }
+
+                    State::Header(n, p) => {
+                        if !p {
+                            output.push(b'<');
+                            output.push(b'h');
+                            output.push(n + 48);
+                            output.push(b'>');
+
+                            state_machine.current = State::Header(n, true);
+                        } else {
+                            output.push(byte);
+                        }
+                    }
+
+                    State::Code(prev, count) => {
+                        if prev {
+                            match count {
+                                1 => {
+                                    output.write(TAG_CODEI_O);
+                                    output.push(byte);
+                                    state_machine.current = State::Code(false, count);
+                                }
+
+                                3 => {
+                                    output.write(TAG_CODEB_O);
+                                    output.push(byte);
+                                    state_machine.current = State::Code(false, count);
+                                }
+
+                                _ => {
+                                    // No reason to push code block if it is empty
+                                    // so we jusp push the character literal to output
+                                    state_machine = state_machine.fall();
+                                    output.push(byte);
+                                }
+                            }
+                        } else {
+                            output.push(byte);
+                        }
+                    }
+
+                    State::Italic(true) => {
+                        output.write(TAG_I_O);
+                        output.push(byte);
+                        state_machine.current = State::Italic(false);
+                    }
+
+                    State::Bold(true) => {
+                        output.write(TAG_B_O);
+                        output.push(byte);
+                        state_machine.current = State::Bold(false);
+                    }
+
+                    State::Link(ref mut ld) => {
+                        if ld.status.is_link() {
+                            // Convert space into url encoded space
+                            output.write(b"%20");
+                        } else {
+                            if ld.status.alt_expects_url() {
+                                output.push(b'[');
+                                output.write(&ld.alt);
+                                output.push(b']');
+                                output.push(byte);
+
+                                state_machine = state_machine.fall();
+                            } else {
+                                ld.alt.push(byte);
+                            }
+                        }
+                    }
+
+                    State::Intendation(_, b) => {
+                        state_machine.current = State::Intendation(false, b);
+                    }
+
+                    State::Escape => {
+                        output.push(byte);
+                        state_machine = state_machine.fall();
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        output.push(byte);
+                        state_machine = state_machine.fall();
+                    }
+
+                    _ => output.push(byte),
+                },
 
                 b'[' => match state_machine.current {
                     State::Link(ref mut ld) | State::Image(ref mut ld) => {
@@ -511,7 +535,7 @@ impl MDS {
                         }
                     }
 
-                    State::Escape | State::Exclamation => {
+                    State::Escape => {
                         output.push(byte);
                         state_machine = state_machine.fall();
                     }
@@ -524,6 +548,37 @@ impl MDS {
                         output.write(TAG_P_O);
                         output.push(byte);
                         state_machine.current = State::Paragraph;
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine = state_machine.fall();
+
+                        match state_machine.current {
+                            State::Link(ref mut ld) | State::Image(ref mut ld) => {
+                                if ld.is_alt() {
+                                    if ld.alt_expects_url() {
+                                        ld.status = Linkstatus::Link;
+                                    } else {
+                                        // Fall back from link/image and write the alt data as is
+                                        output.push(b'[');
+                                        output.write(&ld.alt);
+                                        output.push(byte);
+                                        state_machine = state_machine.fall();
+                                    }
+                                } else {
+                                    output.push(b'[');
+                                    output.write(&ld.alt);
+                                    output.push(b']');
+                                    output.push(b'(');
+                                    output.write(&ld.link);
+                                    output.push(byte);
+                                    state_machine = state_machine.fall();
+                                }
+                            }
+
+                            _ => output.push(byte),
+                        }
                     }
 
                     _ => {
@@ -547,9 +602,33 @@ impl MDS {
                         }
                     }
 
-                    State::Escape | State::Exclamation => {
+                    State::Escape => {
                         output.push(byte);
                         state_machine = state_machine.fall();
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine = state_machine.fall();
+
+                        match state_machine.current {
+                            State::Link(ref mut ld) | State::Image(ref mut ld) => {
+                                if ld.status.is_alt() {
+                                    if ld.alt_expects_closure() {
+                                        ld.status = Linkstatus::Alt(1);
+                                    } else {
+                                        // Fall back from link and write the alt data as is
+                                        output.write(&ld.alt);
+                                        output.push(byte);
+                                        state_machine = state_machine.fall();
+                                    }
+                                } else {
+                                    ld.link.push(byte);
+                                }
+                            }
+
+                            _ => output.push(byte),
+                        }
                     }
 
                     State::Intendation(_, buf) => {
@@ -609,6 +688,43 @@ impl MDS {
                         output.write(TAG_P_O);
                         output.push(byte);
                         state_machine.current = State::Paragraph;
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine = state_machine.fall();
+
+                        match state_machine.current {
+                            State::Link(ref ld) => {
+                                if ld.is_link() {
+                                    // Output an link
+                                    output.write(b"<a href=\"");
+                                    output.write(&ld.link);
+                                    output.write(b"\">");
+                                    output.write(&ld.alt);
+                                    output.write(b"</a>");
+                                    state_machine = state_machine.fall();
+                                } else {
+                                    output.push(byte);
+                                }
+                            }
+
+                            State::Image(ref ld) => {
+                                if ld.is_link() {
+                                    // Output an image
+                                    output.write(b"<img src=\"");
+                                    output.write(&ld.link);
+                                    output.write(b"\" alt=\"");
+                                    output.write(&ld.alt);
+                                    output.write(b"\">");
+                                    state_machine = state_machine.fall();
+                                } else {
+                                    output.push(byte);
+                                }
+                            }
+
+                            _ => output.push(byte),
+                        }
                     }
 
                     _ => output.push(byte),
@@ -695,6 +811,33 @@ impl MDS {
                         state_machine.current = State::Intendation(true, buf);
                     }
 
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine = state_machine.fall();
+
+                        loop {
+                            match state_machine.current {
+                                State::Paragraph => output.write(TAG_P_C),
+                                State::Header(n, _) => {
+                                    output.write(b"</h");
+                                    output.push(n + 48);
+                                    output.push(b'>');
+                                }
+                                State::Intendation(_, mut buf) => {
+                                    buf.inner.push(byte);
+                                    state_machine.current = State::Intendation(true, buf);
+                                    break;
+                                }
+                                _ => {
+                                    output.push(byte);
+                                    break;
+                                }
+                            }
+
+                            state_machine = state_machine.fall();
+                        }
+                    }
+
                     _ => output.push(byte),
                 },
 
@@ -749,6 +892,26 @@ impl MDS {
                             output.write(TAG_P_O);
                             state_machine.current = State::Code(true, 1);
                         }
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine.current = State::Code(true, 1);
+                    }
+
+                    State::Italic(true) => {
+                        output.write(TAG_I_O);
+                        state_machine.current = State::Italic(false);
+                        state_machine = state_machine.rise(State::Code(true, 1));
+                    }
+
+                    State::Bold(seen) => {
+                        if seen {
+                            println!("Warning: Non-escaped `*` in the middle of bolded text. Parsing it as a literal..");
+                            output.push(b'*');
+                            state_machine.current = State::Bold(false);
+                        }
+                        state_machine = state_machine.rise(State::Code(true, 1));
                     }
 
                     _ => {
@@ -844,7 +1007,10 @@ impl MDS {
                         }
                     }
 
-                    State::Exclamation => state_machine.current = State::Italic(true),
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine.current = State::Italic(true);
+                    }
 
                     State::Header(_, _) => state_machine = state_machine.rise(State::Italic(true)),
 
@@ -872,12 +1038,77 @@ impl MDS {
                         }
                     }
 
+                    State::Underscore => {
+                        state_machine = state_machine.rise(State::Italic(true));
+                    }
+
                     _ => output.push(byte),
                 },
 
-                _ => {
-                    output.push(byte);
-                }
+                b'_' => match state_machine.current {
+                    State::None => {
+                        output.write(TAG_P_O);
+                        state_machine =
+                            state_machine.rise(State::Paragraph).rise(State::Underscore);
+                    }
+
+                    State::Paragraph | State::Header(_, _) => {
+                        state_machine = state_machine.rise(State::Underscore)
+                    }
+
+                    State::Intendation(exp, ref buf) => {
+                        if exp {
+                            output.write(TAG_INT_C);
+                            output.write(&buf.inner);
+                            output.write(TAG_P_O);
+                            output.write(TAG_U_O);
+                            state_machine = state_machine
+                                .fall()
+                                .rise(State::Paragraph)
+                                .rise(State::Underscore);
+                        } else {
+                            output.write(TAG_U_O);
+                            state_machine = state_machine.rise(State::Underscore);
+                        }
+                    }
+
+                    State::Bold(seen) => {
+                        if seen {
+                            println!("Warning: Non-escaped `*` in the middle of bolded text. Parsing it as a literal..");
+                            output.push(b'*');
+                            state_machine.current = State::Bold(false);
+                        }
+                        output.write(TAG_U_O);
+                        state_machine = state_machine.rise(State::Underscore);
+                    }
+
+                    State::Italic(seen) => {
+                        if seen {
+                            output.write(TAG_I_O);
+                            state_machine = state_machine.rise(State::Italic(false));
+                        }
+                        output.write(TAG_U_O);
+                        state_machine = state_machine.rise(State::Underscore);
+                    }
+
+                    State::Underscore => {
+                        output.write(TAG_U_C);
+                        state_machine = state_machine.fall();
+                    }
+
+                    State::Escape => {
+                        output.push(byte);
+                        state_machine = state_machine.fall();
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        state_machine = state_machine.fall().rise(State::Underscore);
+                    }
+
+                    _ => output.push(byte),
+                },
+                _ => output.push(byte),
             }
         }
 

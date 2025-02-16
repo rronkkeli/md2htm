@@ -4,6 +4,7 @@ use std::io::Result;
 use std::io::{Read, Write};
 
 mod mdstate;
+mod writeto;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
