@@ -1,9 +1,23 @@
 //! This module converts markdown to html without the root elements.
 
+use crate::writeto::*;
 use std::boxed::Box;
 
 /// Buffer size for output data
 const BUF_SIZE: usize = 16384;
+
+const TAG_P_O: &[u8; 3] = b"<p>";
+const TAG_P_C: &[u8; 4] = b"</p>";
+const TAG_CODEB_O: &[u8; 37] = b"<div class=\"code\"><code class=\"code\">";
+const TAG_CODEB_C: &[u8; 13] = b"</code></div>";
+const TAG_CODEI_O: &[u8; 38] = b"<span class=\"code\"><code class=\"code\">";
+const TAG_CODEI_C: &[u8; 14] = b"</code></span>";
+const TAG_INT_O: &[u8; 20] = b"<div class=\"intend\">";
+const TAG_INT_C: &[u8; 6] = b"</div>";
+const TAG_I_O: &[u8; 3] = b"<i>";
+const TAG_I_C: &[u8; 4] = b"</i>";
+const TAG_B_O: &[u8; 3] = b"<b>";
+const TAG_B_C: &[u8; 4] = b"</b>";
 
 /// Markdown states
 #[derive(Debug)]
@@ -129,9 +143,7 @@ impl MDS {
                     match state_machine.current {
                         State::None => {
                             state_machine = state_machine.rise(State::Paragraph);
-                            output.push(b'<');
-                            output.push(b'p');
-                            output.push(b'>');
+                            output.write(TAG_P_O);
                             output.push(byte);
                         }
 
@@ -140,25 +152,18 @@ impl MDS {
                                 match n {
                                     1 => {
                                         state_machine.current = State::Code(false, n);
-                                        let tag_start_code: &[u8] =
-                                            b"<span class=\"code\"><code class=\"code\">";
-                                        for b in tag_start_code {
-                                            output.push(*b);
-                                        }
+                                        // Open inline code span tag and code tag
+                                        output.write(TAG_CODEI_O);
                                     }
 
                                     3 => {
                                         state_machine.current = State::Code(false, n);
-                                        let tag_start_code: &[u8] =
-                                            b"<div class=\"code\"><code class=\"code\">";
-                                        for b in tag_start_code {
-                                            output.push(*b);
-                                        }
+                                        // Open code block div tag and code tag
+                                        output.write(TAG_CODEB_O);
                                     }
 
                                     _ => {
                                         println!("Warning: Unexpected code block state! Undefined behaviour may occur! Trying to mitigate damage by ignoring previous key..");
-
                                         state_machine = state_machine.fall();
                                         output.push(byte);
                                     }
@@ -169,18 +174,8 @@ impl MDS {
 
                         State::Escape | State::Exclamation => {
                             match byte {
-                                b'<' => {
-                                    for b in b"&lt;" {
-                                        output.push(*b);
-                                    }
-                                }
-
-                                b'>' => {
-                                    for b in b"&gt;" {
-                                        output.push(*b);
-                                    }
-                                }
-
+                                b'<' => output.write(b"&lt;"),
+                                b'>' => output.write(b"&gt;"),
                                 _ => output.push(byte),
                             }
 
@@ -194,12 +189,9 @@ impl MDS {
 
                             Linkstatus::Alt(1) => {
                                 output.push(b'[');
-                                for b in &ld.alt {
-                                    output.push(*b);
-                                }
+                                output.write(&ld.alt);
                                 output.push(b']');
                                 output.push(byte);
-
                                 state_machine = state_machine.fall();
                             }
 
@@ -214,37 +206,25 @@ impl MDS {
 
                         State::Intendation(exp, ref mut buf) => {
                             if exp {
-                                for b in b"</div>" {
-                                    output.push(*b);
-                                }
-
-                                for b in &buf.inner {
-                                    output.push(*b);
-                                }
-
+                                // Close intend div tag
+                                output.write(TAG_INT_C);
+                                // Write the buffer of intendation
+                                output.write(&buf.inner);
                                 state_machine = state_machine.fall();
                             } else {
-                                for b in &buf.inner {
-                                    output.push(*b);
-                                }
-
+                                output.write(&buf.inner);
                                 buf.inner.clear();
                             }
 
-                            for b in b"<p>" {
-                                output.push(*b);
-                            }
-
+                            output.write(TAG_P_O);
                             output.push(byte);
                             state_machine = state_machine.rise(State::Paragraph);
                         }
 
                         State::Italic(seen) => {
                             if seen {
-                                for b in b"<i>" {
-                                    output.push(*b);
-                                }
-
+                                // Open i tag
+                                output.write(TAG_I_O);
                                 state_machine.current = State::Italic(false);
                             }
 
@@ -254,7 +234,6 @@ impl MDS {
                         State::Bold(seen) => {
                             if seen {
                                 println!("Warning: Non-escaped `*` in the middle of bolded text. Parsing it as a literal..");
-
                                 output.push(b'*');
                                 state_machine.current = State::Bold(false);
                             }
@@ -269,7 +248,6 @@ impl MDS {
                 b'!' => match state_machine.current {
                     State::Escape => {
                         output.push(byte);
-
                         state_machine = state_machine.fall();
                     }
 
@@ -279,14 +257,9 @@ impl MDS {
 
                     State::Intendation(exp, ref buf) => {
                         if exp {
-                            for b in b"</div>" {
-                                output.push(*b);
-                            }
-
-                            for b in &buf.inner {
-                                output.push(*b);
-                            }
-
+                            // Close intend div tag
+                            output.write(TAG_INT_C);
+                            output.write(&buf.inner);
                             state_machine = state_machine.fall();
                         }
 
@@ -301,7 +274,6 @@ impl MDS {
                 b'\\' => match state_machine.current {
                     State::Escape | State::Exclamation => {
                         output.push(byte);
-
                         state_machine = state_machine.fall();
                     }
 
@@ -313,14 +285,9 @@ impl MDS {
 
                     State::Intendation(exp, ref buf) => {
                         if exp {
-                            for b in b"</div>" {
-                                output.push(*b);
-                            }
-
-                            for b in &buf.inner {
-                                output.push(*b);
-                            }
-
+                            // Close intend div tag
+                            output.write(TAG_INT_C);
+                            output.write(&buf.inner);
                             state_machine = state_machine.fall();
                         }
                         state_machine = state_machine.rise(State::Header(1, false));
@@ -344,27 +311,22 @@ impl MDS {
                             match n {
                                 1 => {
                                     state_machine.current = State::Code(false, n);
-                                    let tag_start_code: &[u8] =
-                                        b"<span class=\"code\"><code class=\"code\">";
-                                    for b in tag_start_code {
-                                        output.push(*b);
-                                    }
+
+                                    // Open inline code span tag and code tag
+                                    output.write(TAG_CODEI_O);
                                 }
 
                                 3 => {
+                                    // Open code block div tag and code tag
+                                    output.write(TAG_CODEB_O);
                                     state_machine.current = State::Code(false, n);
-                                    let tag_start_code: &[u8] =
-                                        b"<div class=\"code\"><code class=\"code\">";
-                                    for b in tag_start_code {
-                                        output.push(*b);
-                                    }
                                 }
 
                                 _ => {
                                     println!("Warning: Unexpected code block state! Undefined behaviour may occur! Trying to mitigate damage by ignoring previous key..");
 
-                                    state_machine = state_machine.fall();
                                     output.push(byte);
+                                    state_machine = state_machine.fall();
                                 }
                             }
                         }
@@ -382,16 +344,10 @@ impl MDS {
 
                         _ => {
                             output.push(b'[');
-                            for b in &ld.alt {
-                                output.push(*b);
-                            }
+                            output.write(&ld.alt);
                             output.push(b']');
-
                             output.push(b'(');
-                            for b in &ld.link {
-                                output.push(*b);
-                            }
-
+                            output.write(&ld.link);
                             output.push(byte);
                             state_machine = state_machine.fall();
                         }
@@ -405,11 +361,8 @@ impl MDS {
                 b' ' => {
                     match state_machine.current {
                         State::None => {
-                            let tag_start_intend: &[u8] = b"<div class=\"intend\">";
-                            for b in tag_start_intend {
-                                output.push(*b);
-                            }
-
+                            // Open intend div tag
+                            output.write(TAG_INT_O);
                             state_machine = state_machine
                                 .rise(State::Intendation(false, IntenData { inner: Vec::new() }));
                         }
@@ -431,21 +384,15 @@ impl MDS {
                             if prev {
                                 match count {
                                     1 => {
+                                        output.write(TAG_CODEI_O);
+                                        output.push(byte);
                                         state_machine.current = State::Code(false, count);
-                                        let tag_start_code: &[u8] =
-                                            b"<span class=\"code\"><code class=\"code\"> ";
-                                        for b in tag_start_code {
-                                            output.push(*b);
-                                        }
                                     }
 
                                     3 => {
+                                        output.write(TAG_CODEB_O);
+                                        output.push(byte);
                                         state_machine.current = State::Code(false, count);
-                                        let tag_start_code: &[u8] =
-                                            b"<div class=\"code\"><code class=\"code\"> ";
-                                        for b in tag_start_code {
-                                            output.push(*b);
-                                        }
                                     }
 
                                     _ => {
@@ -461,34 +408,25 @@ impl MDS {
                         }
 
                         State::Italic(true) => {
+                            output.write(TAG_I_O);
+                            output.push(byte);
                             state_machine.current = State::Italic(false);
-                            let tag_start_i: &[u8] = b"<i> ";
-                            for b in tag_start_i {
-                                output.push(*b);
-                            }
                         }
 
                         State::Bold(true) => {
+                            output.write(TAG_B_O);
+                            output.push(byte);
                             state_machine.current = State::Bold(false);
-                            let tag_start_b: &[u8] = b"<b> ";
-                            for b in tag_start_b {
-                                output.push(*b);
-                            }
                         }
 
                         State::Link(ref mut ld) => {
                             if ld.status.is_link() {
                                 // Convert space into url encoded space
-                                let url_enc_space: &[u8] = b"%20";
-                                for b in url_enc_space {
-                                    ld.link.push(*b);
-                                }
+                                output.write(b"%20");
                             } else {
                                 if ld.status.alt_expects_url() {
                                     output.push(b'[');
-                                    for b in &ld.alt {
-                                        output.push(*b);
-                                    }
+                                    output.write(&ld.alt);
                                     output.push(b']');
                                     output.push(byte);
 
@@ -536,14 +474,9 @@ impl MDS {
 
                             State::Intendation(exp, ref buf) => {
                                 if exp {
-                                    for b in b"</div>" {
-                                        output.push(*b);
-                                    }
-
-                                    for b in &buf.inner {
-                                        output.push(*b);
-                                    }
-
+                                    // Close intend div tag
+                                    output.write(TAG_INT_C);
+                                    output.write(&buf.inner);
                                     state_machine = state_machine.fall();
                                 }
 
@@ -563,25 +496,16 @@ impl MDS {
                             } else {
                                 // Fall back from link/image and write the alt data as is
                                 output.push(b'[');
-                                for b in &ld.alt {
-                                    output.push(*b);
-                                }
-
+                                output.write(&ld.alt);
                                 output.push(byte);
                                 state_machine = state_machine.fall();
                             }
                         } else {
                             output.push(b'[');
-                            for b in &ld.alt {
-                                output.push(*b);
-                            }
+                            output.write(&ld.alt);
                             output.push(b']');
-
                             output.push(b'(');
-                            for b in &ld.link {
-                                output.push(*b);
-                            }
-
+                            output.write(&ld.link);
                             output.push(byte);
                             state_machine = state_machine.fall();
                         }
@@ -593,21 +517,13 @@ impl MDS {
                     }
 
                     State::Intendation(_, buf) => {
-                        for b in b"</div>" {
-                            output.push(*b);
-                        }
-
-                        for b in &buf.inner {
-                            output.push(*b);
-                        }
-
-                        for b in b"<p>" {
-                            output.push(*b);
-                        }
-
-                        state_machine.current = State::Paragraph;
-
+                        // Close intend div tag
+                        output.write(TAG_INT_C);
+                        output.write(&buf.inner);
+                        // Open p tag
+                        output.write(TAG_P_O);
                         output.push(byte);
+                        state_machine.current = State::Paragraph;
                     }
 
                     _ => {
@@ -622,10 +538,7 @@ impl MDS {
                                 ld.status = Linkstatus::Alt(1);
                             } else {
                                 // Fall back from link and write the alt data as is
-                                for b in &ld.alt {
-                                    output.push(*b);
-                                }
-
+                                output.write(&ld.alt);
                                 output.push(byte);
                                 state_machine = state_machine.fall();
                             }
@@ -640,20 +553,12 @@ impl MDS {
                     }
 
                     State::Intendation(_, buf) => {
-                        for b in b"</div>" {
-                            output.push(*b);
-                        }
-
-                        for b in &buf.inner {
-                            output.push(*b);
-                        }
-
-                        for b in b"<p>" {
-                            output.push(*b);
-                        }
-
+                        // Close intendation div tag
+                        output.write(TAG_INT_C);
+                        output.write(&buf.inner);
+                        // Open p tag
+                        output.write(TAG_P_O);
                         state_machine.current = State::Paragraph;
-
                         output.push(byte);
                     }
 
@@ -666,30 +571,11 @@ impl MDS {
                     State::Link(ref ld) => {
                         if ld.is_link() {
                             // Output an link
-                            let tag_link_start: &[u8] = b"<a href=\"";
-                            let tag_link_middle: &[u8] = b"\">";
-                            let tag_link_end: &[u8] = b"</a>";
-
-                            for b in tag_link_start {
-                                output.push(*b);
-                            }
-
-                            for b in &ld.link {
-                                output.push(*b);
-                            }
-
-                            for b in tag_link_middle {
-                                output.push(*b);
-                            }
-
-                            for b in &ld.alt {
-                                output.push(*b);
-                            }
-
-                            for b in tag_link_end {
-                                output.push(*b);
-                            }
-
+                            output.write(b"<a href=\"");
+                            output.write(&ld.link);
+                            output.write(b"\">");
+                            output.write(&ld.alt);
+                            output.write(b"</a>");
                             state_machine = state_machine.fall();
                         } else {
                             output.push(byte);
@@ -699,30 +585,11 @@ impl MDS {
                     State::Image(ref ld) => {
                         if ld.is_link() {
                             // Output an image
-                            let tag_image_start: &[u8] = b"<img src=\"";
-                            let tag_image_middle: &[u8] = b"\" alt=\"";
-                            let tag_image_end: &[u8] = b"\">";
-
-                            for b in tag_image_start {
-                                output.push(*b);
-                            }
-
-                            for b in &ld.link {
-                                output.push(*b);
-                            }
-
-                            for b in tag_image_middle {
-                                output.push(*b);
-                            }
-
-                            for b in &ld.alt {
-                                output.push(*b);
-                            }
-
-                            for b in tag_image_end {
-                                output.push(*b);
-                            }
-
+                            output.write(b"<img src=\"");
+                            output.write(&ld.link);
+                            output.write(b"\" alt=\"");
+                            output.write(&ld.alt);
+                            output.write(b"\">");
                             state_machine = state_machine.fall();
                         } else {
                             output.push(byte);
@@ -735,21 +602,13 @@ impl MDS {
                     }
 
                     State::Intendation(_, buf) => {
-                        for b in b"</div>" {
-                            output.push(*b);
-                        }
-
-                        for b in &buf.inner {
-                            output.push(*b);
-                        }
-
-                        for b in b"<p>" {
-                            output.push(*b);
-                        }
-
-                        state_machine.current = State::Paragraph;
-
+                        // Close intend div tag
+                        output.write(TAG_INT_C);
+                        output.write(&buf.inner);
+                        // Open p tag
+                        output.write(TAG_P_O);
                         output.push(byte);
+                        state_machine.current = State::Paragraph;
                     }
 
                     _ => output.push(byte),
@@ -763,9 +622,7 @@ impl MDS {
                             println!("Empty header? Really??");
                         }
 
-                        output.push(b'<');
-                        output.push(b'/');
-                        output.push(b'h');
+                        output.write(b"</h");
                         output.push(n + 48);
                         output.push(b'>');
                         output.push(byte);
@@ -794,19 +651,14 @@ impl MDS {
                     State::Code(_, 0..3) => {
                         println!("Warning: You can't just put a new line in inline code! Are you daft? Look what happened!");
 
-                        let tag_code_end: &[u8] = b"</code></span>";
-                        for b in tag_code_end {
-                            output.push(*b);
-                        }
+                        // Close code blog span tag and code tag
+                        output.write(TAG_CODEI_C);
 
                         state_machine = state_machine.fall();
 
                         while !state_machine.is_none() {
                             if state_machine.is_paragraph() {
-                                output.push(b'<');
-                                output.push(b'/');
-                                output.push(b'p');
-                                output.push(b'>');
+                                output.write(TAG_P_C);
                             }
 
                             state_machine = state_machine.fall();
@@ -824,24 +676,15 @@ impl MDS {
                         println!("Warning: New lines in links and images are not supported. This may cripple your text.");
                         if ld.is_alt() {
                             output.push(b'[');
-                            for b in &ld.alt {
-                                output.push(*b);
-                            }
-
+                            output.write(&ld.alt);
                             output.push(byte);
                             state_machine = state_machine.fall();
                         } else {
                             output.push(b'[');
-                            for b in &ld.alt {
-                                output.push(*b);
-                            }
+                            output.write(&ld.alt);
                             output.push(b']');
-
                             output.push(b'(');
-                            for b in &ld.link {
-                                output.push(*b);
-                            }
-
+                            output.write(&ld.link);
                             output.push(byte);
                             state_machine = state_machine.fall();
                         }
@@ -849,7 +692,6 @@ impl MDS {
 
                     State::Intendation(_, mut buf) => {
                         buf.inner.push(byte);
-
                         state_machine.current = State::Intendation(true, buf);
                     }
 
@@ -858,11 +700,7 @@ impl MDS {
 
                 b'`' => match state_machine.current {
                     State::None => {
-                        output.push(b'<');
-                        output.push(b'/');
-                        output.push(b'p');
-                        output.push(b'>');
-
+                        output.write(TAG_P_O);
                         state_machine = state_machine
                             .rise(State::Paragraph)
                             .rise(State::Code(true, 1));
@@ -875,20 +713,14 @@ impl MDS {
                             match n {
                                 // Close inline code
                                 1 => {
-                                    let tag_code_end: &[u8] = b"</code></span>";
-                                    for b in tag_code_end {
-                                        output.push(*b);
-                                    }
-
+                                    // Close code blog span tag and code tag
+                                    output.write(TAG_CODEI_C);
                                     state_machine = state_machine.fall();
                                 },
 
                                 3 => {
-                                    let tag_code_end: &[u8] = b"</code></div>";
-                                    for b in tag_code_end {
-                                        output.push(*b);
-                                    }
-
+                                    // Close code blog div tag and code tag
+                                    output.write(TAG_CODEB_C);
                                     state_machine = state_machine.fall();
                                 },
 
@@ -904,26 +736,17 @@ impl MDS {
 
                     State::Intendation(exp, ref buf) => {
                         if !exp {
-                            for b in b"<p>" {
-                                output.push(*b);
-                            }
-
+                            // Open p tag
+                            output.write(TAG_P_O);
                             state_machine = state_machine
                                 .rise(State::Paragraph)
                                 .rise(State::Code(true, 1));
                         } else {
-                            for b in b"</div>" {
-                                output.push(*b);
-                            }
-
-                            for b in &buf.inner {
-                                output.push(*b);
-                            }
-
-                            for b in b"<p>" {
-                                output.push(*b);
-                            }
-
+                            // Close intend div tag
+                            output.write(TAG_INT_C);
+                            output.write(&buf.inner);
+                            // Open p tag
+                            output.write(TAG_P_O);
                             state_machine.current = State::Code(true, 1);
                         }
                     }
@@ -935,39 +758,29 @@ impl MDS {
 
                 b'*' => match state_machine.current {
                     State::None => {
-                        for b in b"<p>" {
-                            output.push(*b);
-                        }
-
+                        // Open p tag
+                        output.write(TAG_P_O);
                         state_machine = state_machine
                             .rise(State::Paragraph)
                             .rise(State::Italic(true));
-                    },
+                    }
 
                     State::Paragraph => state_machine = state_machine.rise(State::Italic(true)),
 
                     State::Intendation(exp, ref buf) => {
                         if exp {
-                            for b in b"</div>" {
-                                output.push(*b);
-                            }
-
-                            for b in &buf.inner {
-                                output.push(*b);
-                            }
-
-                            for b in b"<p>" {
-                                output.push(*b);
-                            }
-
-                            state_machine.current = State::Paragraph;
-                            state_machine = state_machine.rise(State::Italic(true));
-
+                            // Close intend div tag
+                            output.write(TAG_INT_C);
+                            output.write(&buf.inner);
+                            // Open p tag
+                            output.write(TAG_P_O);
+                            state_machine = state_machine
+                                .fall()
+                                .rise(State::Paragraph)
+                                .rise(State::Italic(true));
                         } else {
-                            for b in b"<p>" {
-                                output.push(*b);
-                            }
-
+                            // Open p tag
+                            output.write(TAG_P_O);
                             state_machine = state_machine
                                 .rise(State::Paragraph)
                                 .rise(State::Italic(true));
@@ -979,39 +792,23 @@ impl MDS {
 
                         match state_machine.current {
                             State::None => {
-                                for b in b"<p>" {
-                                output.push(*b);
-                                }
-
-                                state_machine = state_machine
-                                    .rise(State::Paragraph);
+                                // Open p tag
+                                output.write(TAG_P_O);
+                                state_machine = state_machine.rise(State::Paragraph);
                             }
 
                             State::Intendation(exp, ref buf) => {
                                 if exp {
-                                    for b in b"</div>" {
-                                        output.push(*b);
-                                    }
-
-                                    for b in &buf.inner {
-                                        output.push(*b);
-                                    }
-
-                                    for b in b"<p>" {
-                                        output.push(*b);
-                                    }
-
-                                    state_machine = state_machine
-                                        .fall()
-                                        .rise(State::Paragraph);
-
+                                    // Close intend div tag
+                                    output.write(TAG_INT_C);
+                                    output.write(&buf.inner);
+                                    // Open p tag
+                                    output.write(TAG_P_O);
+                                    state_machine = state_machine.fall().rise(State::Paragraph);
                                 } else {
-                                    for b in b"<p>" {
-                                        output.push(*b);
-                                    }
-
-                                    state_machine = state_machine
-                                        .rise(State::Paragraph);
+                                    // Open p tag
+                                    output.write(TAG_P_O);
+                                    state_machine = state_machine.rise(State::Paragraph);
                                 }
                             }
 
@@ -1025,28 +822,21 @@ impl MDS {
                         if ls {
                             match n {
                                 1 => {
+                                    output.write(TAG_CODEI_O);
+                                    output.push(byte);
                                     state_machine.current = State::Code(false, n);
-                                    let tag_start_code: &[u8] =
-                                        b"<span class=\"code\"><code class=\"code\">*";
-                                    for b in tag_start_code {
-                                        output.push(*b);
-                                    }
                                 }
 
                                 3 => {
+                                    output.write(TAG_CODEB_O);
+                                    output.push(byte);
                                     state_machine.current = State::Code(false, n);
-                                    let tag_start_code: &[u8] =
-                                        b"<div class=\"code\"><code class=\"code\">*";
-                                    for b in tag_start_code {
-                                        output.push(*b);
-                                    }
                                 }
 
                                 _ => {
                                     println!("Warning: Unexpected code block state! Undefined behaviour may occur! Trying to mitigate damage by ignoring previous key..");
-
-                                    state_machine = state_machine.fall();
                                     output.push(byte);
+                                    state_machine = state_machine.fall();
                                 }
                             }
                         } else {
@@ -1060,31 +850,23 @@ impl MDS {
 
                     State::Italic(seen) => {
                         if seen {
-                            for b in b"<b>" {
-                                output.push(*b);
-                            }
-
+                            // Open b tag
+                            output.write(TAG_B_O);
                             // Switch state from Italic to Bold because there were two `*` characters
                             // in a row. Swtiching instead of rising to not preserve the Italic state.
                             state_machine.current = State::Bold(false);
-
                         } else {
-                            for b in b"</i>" {
-                                output.push(*b);
-                            }
-
+                            // Close i tag
+                            output.write(TAG_I_C);
                             state_machine = state_machine.fall();
                         }
                     }
 
                     State::Bold(seen) => {
                         if seen {
-                            for b in b"</b>" {
-                                output.push(*b);
-                            }
-
+                            // Close b tag
+                            output.write(TAG_B_C);
                             state_machine = state_machine.fall();
-
                         } else {
                             state_machine.current = State::Bold(true);
                         }
@@ -1100,9 +882,8 @@ impl MDS {
         }
 
         if state_machine.is_paragraph() {
-            for b in b"</p>" {
-                output.push(*b);
-            }
+            // Close p tag
+            output.write(TAG_P_C);
         }
 
         output
