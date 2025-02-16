@@ -16,6 +16,8 @@ enum State {
     Paragraph,
     /// True if expecting a new line or space
     Intendation(bool, IntenData),
+    /// True if bold state expects a closure. In other words the parser has seen first `*`
+    /// character and is aticipating the next one in next byte.
     Bold(bool),
     /// True signifies that there has been a * symbol just before.
     /// Should be switched to false immediately after any other character
@@ -235,6 +237,29 @@ impl MDS {
 
                             output.push(byte);
                             state_machine = state_machine.rise(State::Paragraph);
+                        }
+
+                        State::Italic(seen) => {
+                            if seen {
+                                for b in b"<i>" {
+                                    output.push(*b);
+                                }
+
+                                state_machine.current = State::Italic(false);
+                            }
+
+                            output.push(byte);
+                        }
+
+                        State::Bold(seen) => {
+                            if seen {
+                                println!("Warning: Non-escaped `*` in the middle of bolded text. Parsing it as a literal..");
+
+                                output.push(b'*');
+                                state_machine.current = State::Bold(false);
+                            }
+
+                            output.push(byte);
                         }
 
                         _ => output.push(byte),
@@ -908,6 +933,166 @@ impl MDS {
                     }
                 },
 
+                b'*' => match state_machine.current {
+                    State::None => {
+                        for b in b"<p>" {
+                            output.push(*b);
+                        }
+
+                        state_machine = state_machine
+                            .rise(State::Paragraph)
+                            .rise(State::Italic(true));
+                    },
+
+                    State::Paragraph => state_machine = state_machine.rise(State::Italic(true)),
+
+                    State::Intendation(exp, ref buf) => {
+                        if exp {
+                            for b in b"</div>" {
+                                output.push(*b);
+                            }
+
+                            for b in &buf.inner {
+                                output.push(*b);
+                            }
+
+                            for b in b"<p>" {
+                                output.push(*b);
+                            }
+
+                            state_machine.current = State::Paragraph;
+                            state_machine = state_machine.rise(State::Italic(true));
+
+                        } else {
+                            for b in b"<p>" {
+                                output.push(*b);
+                            }
+
+                            state_machine = state_machine
+                                .rise(State::Paragraph)
+                                .rise(State::Italic(true));
+                        }
+                    }
+
+                    State::Escape => {
+                        state_machine = state_machine.fall();
+
+                        match state_machine.current {
+                            State::None => {
+                                for b in b"<p>" {
+                                output.push(*b);
+                                }
+
+                                state_machine = state_machine
+                                    .rise(State::Paragraph);
+                            }
+
+                            State::Intendation(exp, ref buf) => {
+                                if exp {
+                                    for b in b"</div>" {
+                                        output.push(*b);
+                                    }
+
+                                    for b in &buf.inner {
+                                        output.push(*b);
+                                    }
+
+                                    for b in b"<p>" {
+                                        output.push(*b);
+                                    }
+
+                                    state_machine = state_machine
+                                        .fall()
+                                        .rise(State::Paragraph);
+
+                                } else {
+                                    for b in b"<p>" {
+                                        output.push(*b);
+                                    }
+
+                                    state_machine = state_machine
+                                        .rise(State::Paragraph);
+                                }
+                            }
+
+                            _ => {}
+                        }
+
+                        output.push(byte);
+                    }
+
+                    State::Code(ls, n) => {
+                        if ls {
+                            match n {
+                                1 => {
+                                    state_machine.current = State::Code(false, n);
+                                    let tag_start_code: &[u8] =
+                                        b"<span class=\"code\"><code class=\"code\">*";
+                                    for b in tag_start_code {
+                                        output.push(*b);
+                                    }
+                                }
+
+                                3 => {
+                                    state_machine.current = State::Code(false, n);
+                                    let tag_start_code: &[u8] =
+                                        b"<div class=\"code\"><code class=\"code\">*";
+                                    for b in tag_start_code {
+                                        output.push(*b);
+                                    }
+                                }
+
+                                _ => {
+                                    println!("Warning: Unexpected code block state! Undefined behaviour may occur! Trying to mitigate damage by ignoring previous key..");
+
+                                    state_machine = state_machine.fall();
+                                    output.push(byte);
+                                }
+                            }
+                        } else {
+                            output.push(byte);
+                        }
+                    }
+
+                    State::Exclamation => state_machine.current = State::Italic(true),
+
+                    State::Header(_, _) => state_machine = state_machine.rise(State::Italic(true)),
+
+                    State::Italic(seen) => {
+                        if seen {
+                            for b in b"<b>" {
+                                output.push(*b);
+                            }
+
+                            // Switch state from Italic to Bold because there were two `*` characters
+                            // in a row. Swtiching instead of rising to not preserve the Italic state.
+                            state_machine.current = State::Bold(false);
+
+                        } else {
+                            for b in b"</i>" {
+                                output.push(*b);
+                            }
+
+                            state_machine = state_machine.fall();
+                        }
+                    }
+
+                    State::Bold(seen) => {
+                        if seen {
+                            for b in b"</b>" {
+                                output.push(*b);
+                            }
+
+                            state_machine = state_machine.fall();
+
+                        } else {
+                            state_machine.current = State::Bold(true);
+                        }
+                    }
+
+                    _ => output.push(byte),
+                },
+
                 _ => {
                     output.push(byte);
                 }
@@ -915,10 +1100,9 @@ impl MDS {
         }
 
         if state_machine.is_paragraph() {
-            output.push(b'<');
-            output.push(b'/');
-            output.push(b'p');
-            output.push(b'>');
+            for b in b"</p>" {
+                output.push(*b);
+            }
         }
 
         output
