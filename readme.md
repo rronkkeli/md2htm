@@ -23,10 +23,18 @@ All previous mentions will be supported in future versions. And in the more dist
 
 ## Problems of this software
 
-You can fill your memory by writing _*_*_*_*_*_*_*_*_*_*_*_*.., because the program allocates new memory slot for the new states and you are constantly calling it to allocate new state. Do that enough and the memory is full and the program crashes. Of course this means that you would need a large Markdown file full of this type of text. I am not fixing this bug, because it doesn't bother me.
+You can fill your memory by writing \_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*.., because the program allocates new memory slot for the new states and you are constantly calling it to allocate new state. Do that enough and the memory is full and the program crashes. Of course this means that you would need a large Markdown file full of this type of text. I am not fixing this bug, because it doesn't bother me.
 
 # Why this project?
 
 I needed a markdown parser for my blog because writing markdown is a clear way to format text. I could have gone a different route, like just detecting new lines to parse into paragraphs but it wasn't enough. I also wanted something to hone my coding skills with, so this came into mind. I could have used ready programs but why use readily available programs when you can bang your head to the wall?
 
 This code is propably very confusing to look at because there are hundreds of rows of match arms. I wanted to make it by using match arms because they are so powerful in rust.
+
+# Future aim
+
+I aim to make this into a service that runs inside linux server and listens unix domain socket that my web server then connects to and writes the markdown directly as a message. This mitigates the need to load the process into memory each time my web server needs it, making it much faster performing translator.
+
+# Performance
+
+The statemachine based parser `MDS::parse(nönnönnöö)` parses this markdown file in mere 30-60µs (with Ryzen 7 5700U 1,8GHz) on Windows 11. Taking the process loading into account, it takes around 161ms to run this whole program on this same machine. On a server that constantly translates Markdown on the fly, this would definitely make an impact.
