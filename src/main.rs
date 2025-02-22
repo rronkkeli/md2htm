@@ -1,4 +1,10 @@
-pub(crate) use std::{env, fs::{File, remove_file}, io::{Read, Result, Write}, os::unix::net::{UnixListener, UnixStream}, thread::spawn};
+pub(crate) use std::{
+    env,
+    fs::{remove_file, File},
+    io::{Read, Result, Write},
+    os::unix::net::{UnixListener, UnixStream},
+    thread::spawn,
+};
 
 mod mdstate;
 mod writeto;
@@ -9,7 +15,9 @@ const SOCK: &str = "/tmp/mdserv.sock";
 fn main() -> Result<()> {
     // Try to remove the socket file but don't really care about the outcome,
     // because the binding won't succeed if there is no privileges to write.
-    match remove_file(SOCK) { _ => {}};
+    match remove_file(SOCK) {
+        _ => {}
+    };
     let args: Vec<String> = env::args().collect();
     handle_args(args)?;
     Ok(())
@@ -31,26 +39,22 @@ fn stream_handler(mut stream: UnixStream) {
                     let plen: [u8; PS] = parsed.len().to_be_bytes();
 
                     match stream.write(&plen) {
-                        Ok(_) => {
-                            match stream.write(&parsed) {
-                                Ok(_) => {
-                                    match stream.flush() {
-                                        Ok(_) => return,
-                                        Err(e) => eprintln!("Flushing wasn't successful: {e}"),
-                                    }
-                                },
+                        Ok(_) => match stream.write(&parsed) {
+                            Ok(_) => match stream.flush() {
+                                Ok(_) => return,
+                                Err(e) => eprintln!("Flushing wasn't successful: {e}"),
+                            },
 
-                                Err(e) => eprintln!("Couldn't write the parsed data: {e}"),
-                            }
+                            Err(e) => eprintln!("Couldn't write the parsed data: {e}"),
                         },
 
                         Err(e) => eprintln!("Couldn't write the length bytes: {e}"),
                     }
-                },
+                }
 
                 Err(e) => eprintln!("Failed to read the {len} message bytes: {e}"),
             }
-        },
+        }
 
         Err(e) => eprintln!("Failed to read the length of the message: {e}"),
     }
@@ -66,7 +70,7 @@ fn handle_args(args: Vec<String>) -> Result<()> {
     match args[1].as_str() {
         "help" | "--help" | "-h" | "h" | "?" => {
             print_help();
-        },
+        }
 
         "daemon" | "d" | "--daemon" | "-d" => {
             if args.len() == 2 {
@@ -78,38 +82,34 @@ fn handle_args(args: Vec<String>) -> Result<()> {
                             spawn(|| {
                                 stream_handler(stream);
                             });
-                        },
+                        }
 
                         Err(e) => eprintln!("Failed to catch the stream: {e}"),
                     }
                 }
-
             } else {
                 eprintln!("Daemon mode doesn't take arguments.");
             }
-        },
-
-        _ => {
-            match args.len() {
-                2 => {
-                    let mut dst: String;
-
-                    if args[1].find(".md").is_some_and(|x| x == args[1].len() - 3) {
-                        dst = args[1].replace(".md", ".html");
-
-                    } else {
-                        dst = args[1].clone();
-                        dst.push_str(".html");
-                    }
-
-                    parse(&args[1], &dst)?;
-                },
-
-                3 => parse(&args[1], &args[2])?,
-
-                _ => eprintln!("Too many arguments! Expected at most 2."),
-            }
         }
+
+        _ => match args.len() {
+            2 => {
+                let mut dst: String;
+
+                if args[1].find(".md").is_some_and(|x| x == args[1].len() - 3) {
+                    dst = args[1].replace(".md", ".html");
+                } else {
+                    dst = args[1].clone();
+                    dst.push_str(".html");
+                }
+
+                parse(&args[1], &dst)?;
+            }
+
+            3 => parse(&args[1], &args[2])?,
+
+            _ => eprintln!("Too many arguments! Expected at most 2."),
+        },
     }
 
     Ok(())
@@ -129,7 +129,7 @@ fn parse<P: AsRef<std::path::Path>>(src: P, dst: P) -> Result<()> {
 
 fn print_help() {
     println!(
-    "Usage md2htm [daemon|source file|help] [[output file]]
+        "Usage md2htm [daemon|source file|help] [[output file]]
 
     Parses Markdown to HTML without adding any of the root tags.
 
@@ -164,6 +164,7 @@ fn print_help() {
     it can be removed manually with:
     sudo rm {}
 
-    Bugs and issues should be reported in https://github.com/rronkkeli/md2htm", SOCK, SOCK
+    Bugs and issues should be reported in https://github.com/rronkkeli/md2htm",
+        SOCK, SOCK
     );
 }
