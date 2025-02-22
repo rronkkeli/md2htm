@@ -9,6 +9,7 @@ function parse($markdown) {
     $len = fread($handle, 8);
     $len = unpack("J", $len);
     $html = fread($handle, $len[1]);
+    fclose($handle);
     return $html;
 }
 

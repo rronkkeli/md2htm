@@ -23,7 +23,7 @@ All previous mentions will be supported in future versions. And in the more dist
 
 ## Problems of this software
 
-You can fill your memory by writing \_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*.., because the program allocates new memory slot for the new states and you are constantly calling it to allocate new state. Do that enough and the memory is full and the program crashes. Of course this means that you would need a large Markdown file full of this type of text. I am not fixing this bug, because it doesn't bother me.
+You can fill your memory by writing \_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*\_\*.., because the program allocates new memory slot for the new states and you are constantly calling it to allocate new state. Do that enough and the memory is full and the program crashes. Of course this means that you would need a large Markdown file full of this type of text. I will fix this bug at some point as it makes using this on a webserver unfeasable due to user input.
 
 # Why this project?
 
