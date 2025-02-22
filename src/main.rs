@@ -1,4 +1,4 @@
-pub(crate) use std::{env, fs::{File, remove_file}, io::{Read, Result, Write}, os::unix::net::{Incoming, UnixListener, UnixStream}, thread::spawn};
+pub(crate) use std::{env, fs::{File, remove_file}, io::{Read, Result, Write}, os::unix::net::{UnixListener, UnixStream}, thread::spawn};
 
 mod mdstate;
 mod writeto;
@@ -64,7 +64,7 @@ fn handle_args(args: Vec<String>) -> Result<()> {
     }
 
     match args[1].as_str() {
-        "help" | "--help" | "-h" | "h" => {
+        "help" | "--help" | "-h" | "h" | "?" => {
             print_help();
         },
 
@@ -123,6 +123,7 @@ fn parse<P: AsRef<std::path::Path>>(src: P, dst: P) -> Result<()> {
     let output: Vec<u8> = mdstate::MDS::parse(markdown);
     let mut outfile: File = File::create(dst)?;
     outfile.write_all(&output)?;
+    println!("Target parsed!");
     Ok(())
 }
 
@@ -134,11 +135,16 @@ fn print_help() {
 
     help, --help, h, -h, ?      Show this help and exit.
 
-    daemon, --daemon, d, -d     Start the program in daemon mode that listens a socket in {}. If given, no other arguments are expected.
+    daemon, --daemon, d, -d     Start the program in daemon mode that listens a socket in {}.
+                                If given, no other arguments are expected.
 
-    [source file]               The path of the source file containing the Markdown text. Doesn't expect a file extension '.md' or anything else.
+    [source file]               The path of the source file containing the Markdown text.
+                                Doesn't expect a file extension '.md' or anything else.
 
-    [output file]               Optional. The path of the output file. If omitted, the program uses the same path as the source file, but replaces/appends the file extention to .html. Doesn't expect the file extension '.html'.
+    [output file]               Optional. The path of the output file. If omitted,
+                                the program uses the same path as the source file,
+                                but replaces/appends the file extention to .html.
+                                Doesn't expect the file extension '.html'.
 
     Examples:
 
@@ -154,7 +160,8 @@ fn print_help() {
     md2htm d
     md2htm -d
 
-    If the program doesn't have sufficient privileges to remove the socket file, it can be removed manually with:
+    If the program doesn't have sufficient privileges to remove the socket file,
+    it can be removed manually with:
     sudo rm {}
 
     Bugs and issues should be reported in https://github.com/rronkkeli/md2htm", SOCK, SOCK
