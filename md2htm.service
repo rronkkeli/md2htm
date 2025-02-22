@@ -1,0 +1,8 @@
+[Unit]
+Description=Markdown to HTML parser daemon
+
+[Service]
+ExecStart=/usr/bin/md2htm daemon
+
+[Install]
+WantedBy=multi-user.target

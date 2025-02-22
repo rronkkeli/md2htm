@@ -37,4 +37,4 @@ I aim to make this into a service that runs inside linux server and listens unix
 
 # Performance
 
-The statemachine based parser `MDS::parse(nönnönnöö)` parses this markdown file in mere 30-60µs (with Ryzen 7 5700U 1,8GHz) on Windows 11. Taking the process loading into account, it takes around 161ms to run this whole program on this same machine. On a server that constantly translates Markdown on the fly, this would definitely make an impact.
+The statemachine based parser `MDS::parse(nönnönnöö)` parses this markdown file in mere 30-60µs (with Ryzen 7 5700U 1,8GHz and M.2 SSD) on Windows 11. Taking the process loading into account, it takes around 161ms to run this whole program on this same machine. On Debian with i5-3210M 2.50GHz CPU and SATA SSD, the running time was 3ms of which the parsing time was around 60µs. On a server that constantly translates Markdown on the fly, this would definitely make an impact. I will however conduct more tests when I implement the client with PHP.
