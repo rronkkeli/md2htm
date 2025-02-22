@@ -10,7 +10,7 @@ mod mdstate;
 mod writeto;
 
 const PS: usize = std::mem::size_of::<usize>();
-const SOCK: &str = "/tmp/mdserv.sock";
+const SOCK: &str = "/run/mdserv/mdserv.sock";
 
 fn main() -> Result<()> {
     // Try to remove the socket file but don't really care about the outcome,

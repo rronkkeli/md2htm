@@ -1,5 +1,6 @@
 #!/bin/bash
 cp ./md2htm /usr/bin/
+mkdir /run/mdserv
 
 echo "Do you want to enable the daemon service? (y/n) "
 read ans

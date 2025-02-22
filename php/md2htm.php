@@ -1,7 +1,7 @@
 <?php
 
 function parse($markdown) {
-    $sock = "unix:///tmp/mdserv.sock";
+    $sock = "unix:///run/mdserv/mdserv.sock";
     // Assumes big endianness
     $len = pack("J", strlen($markdown));
     $handle = fsockopen($sock);
