@@ -17,6 +17,12 @@ const TAG_B_O: &[u8; 3] = b"<b>";
 const TAG_B_C: &[u8; 4] = b"</b>";
 const TAG_U_O: &[u8; 3] = b"<u>";
 const TAG_U_C: &[u8; 4] = b"</u>";
+const TAG_LI_O: &[u8; 4] = b"<li>";
+const TAG_LI_C: &[u8; 5] = b"</li>";
+const TAG_UL_O: &[u8; 4] = b"<ul>";
+const TAG_UL_C: &[u8; 5] = b"</ul>";
+const TAG_HR: &[u8; 4] = b"<hr>";
+
 
 /// Markdown states
 #[derive(Debug)]
@@ -44,6 +50,10 @@ enum State {
     Exclamation,
     Image(Linkdata),
     Escape,
+    /// 1st true if seen a '-' previously. 2nd true if the list tag has been placed.
+    UList(bool, bool),
+    LItem,
+    Hor(u8),
 }
 
 #[derive(Debug)]
@@ -140,9 +150,13 @@ impl MDS {
         // processing speed.
         let mut output: Vec<u8> = Vec::with_capacity(bytes.capacity() << 1);
 
+        let mut line_counter: usize = 1;
+        // Counts the current bytes that are not new lines or carriage returns, on the line.
+        let mut column_counter: usize = 0;
+
         for byte in bytes {
             match byte {
-                0..10 | 11..13 | 14..32 | 34..35 | 36..40 | 43..91 | 97..=255 => {
+                0..10 | 11..13 | 14..32 | 34..35 | 36..40 | 43..45 | 46..91 | 97..=255 => {
                     match state_machine.current {
                         State::None => {
                             state_machine = state_machine.rise(State::Paragraph);
@@ -166,9 +180,8 @@ impl MDS {
                                     }
 
                                     _ => {
-                                        println!("Warning: Unexpected code block state! Undefined behaviour may occur! Trying to mitigate damage by ignoring previous key..");
+                                        println!("Warning: Unexpected code block state! Undefined behaviour may occur! Trying to mitigate damage by ignoring previous key on line {} column {}..", line_counter, column_counter);
                                         state_machine = state_machine.fall();
-                                        output.push(byte);
                                     }
                                 }
                             }
@@ -242,12 +255,41 @@ impl MDS {
 
                         State::Bold(seen) => {
                             if seen {
-                                println!("Warning: Non-escaped `*` in the middle of bolded text. Parsing it as a literal..");
+                                eprintln!("Warning: Non-escaped `*` in the middle of bolded on line {} column {}. Parsing it as a literal..",
+                                         line_counter, column_counter);
                                 output.push(b'*');
                                 state_machine.current = State::Bold(false);
                             }
 
                             output.push(byte);
+                        }
+
+                        State::UList(seen, written) => {
+                            if seen {
+                                eprintln!("Unexpected character when expecting a space on line {} column {}",
+                                          line_counter, column_counter);
+                            }
+
+                            if written {
+                                output.write(TAG_UL_C);
+                            }
+
+                            output.write(TAG_P_C);
+                            state_machine = state_machine.fall().fall();
+
+                            match state_machine.current {
+                                State::Intendation(_, ref buf) => {
+                                    output.write(TAG_INT_C);
+                                    output.write(&buf.inner);
+                                    state_machine = state_machine.fall();
+                                }
+                                _ => {}
+                            }
+
+                            output.write(TAG_P_O);
+                            output.push(byte);
+
+                            state_machine = state_machine.rise(State::Paragraph);
                         }
 
                         _ => output.push(byte),
@@ -471,6 +513,18 @@ impl MDS {
                         state_machine = state_machine.fall();
                     }
 
+                    State::UList(true, written) => {
+                        if !written {
+                            output.write(TAG_UL_O);
+                        }
+
+                        output.write(TAG_LI_O);
+                        state_machine.current = State::UList(false, true);
+                        state_machine = state_machine.rise(State::LItem);
+                    }
+
+                    State::UList(false, _) => continue,
+
                     _ => output.push(byte),
                 },
 
@@ -505,6 +559,17 @@ impl MDS {
                                 }
 
                                 state_machine = state_machine.rise(State::Link(ld));
+                            }
+
+                            State::UList(_, written) => {
+                                if written {
+                                    output.write(TAG_UL_C);
+                                }
+                                output.write(TAG_P_C);
+                                state_machine = state_machine
+                                    .fall()
+                                    .fall()
+                                    .rise(State::Link(ld));
                             }
 
                             _ => state_machine = state_machine.rise(State::Link(ld)),
@@ -579,6 +644,19 @@ impl MDS {
 
                             _ => output.push(byte),
                         }
+                    }
+
+                    State::UList(_, written) => {
+                        if written {
+                            // Start a new paragraph and end the list
+                            output.write(TAG_UL_C);
+                        }
+
+                        output.write(TAG_P_C);
+                        output.write(TAG_P_O);
+                        output.push(byte);
+                        state_machine = state_machine
+                            .fall();
                     }
 
                     _ => {
@@ -730,144 +808,175 @@ impl MDS {
                     _ => output.push(byte),
                 },
 
-                b'\r' | b'\n' => match state_machine.current {
-                    State::None => output.push(byte),
-
-                    State::Header(n, p) => {
-                        if !p {
-                            println!("Empty header? Really??");
-                        }
-
-                        output.write(b"</h");
-                        output.push(n + 48);
-                        output.push(b'>');
-                        output.push(byte);
-
-                        state_machine = state_machine.fall();
+                b'\r' | b'\n' => {
+                    column_counter = 0;
+                    if byte == b'\n' {
+                        line_counter += 1;
                     }
 
-                    State::Paragraph => {
-                        output.push(b'<');
-                        output.push(b'/');
-                        output.push(b'p');
-                        output.push(b'>');
+                    match state_machine.current {
+                        State::None => output.push(byte),
 
-                        state_machine = state_machine.fall();
-
-                        match state_machine.current {
-                            State::Intendation(_, mut buf) => {
-                                buf.inner.push(byte);
-                                state_machine.current = State::Intendation(true, buf);
+                        State::Header(n, p) => {
+                            if !p {
+                                println!("Empty header? Really??");
                             }
 
-                            _ => output.push(byte),
-                        }
-                    }
-
-                    State::Code(_, 0..3) => {
-                        println!("Warning: You can't just put a new line in inline code! Are you daft? Look what happened!");
-
-                        // Close code blog span tag and code tag
-                        output.write(TAG_CODEI_C);
-
-                        state_machine = state_machine.fall();
-
-                        while !state_machine.is_none() {
-                            if state_machine.is_paragraph() {
-                                output.write(TAG_P_C);
-                            }
-
-                            state_machine = state_machine.fall();
-                        }
-
-                        output.push(byte);
-                    }
-
-                    State::Escape => {
-                        output.push(byte);
-                        state_machine = state_machine.fall();
-                    }
-
-                    State::Link(ref ld) | State::Image(ref ld) => {
-                        println!("Warning: New lines in links and images are not supported. This may cripple your text.");
-                        if ld.is_alt() {
-                            output.push(b'[');
-                            output.write(&ld.alt);
+                            output.write(b"</h");
+                            output.push(n + 48);
+                            output.push(b'>');
                             output.push(byte);
-                            state_machine = state_machine.fall();
-                        } else {
-                            output.push(b'[');
-                            output.write(&ld.alt);
-                            output.push(b']');
-                            output.push(b'(');
-                            output.write(&ld.link);
-                            output.push(byte);
+
                             state_machine = state_machine.fall();
                         }
-                    }
 
-                    State::Intendation(_, mut buf) => {
-                        buf.inner.push(byte);
-                        state_machine.current = State::Intendation(true, buf);
-                    }
+                        State::Paragraph => {
+                            output.push(b'<');
+                            output.push(b'/');
+                            output.push(b'p');
+                            output.push(b'>');
 
-                    State::Exclamation => {
-                        output.push(b'!');
-                        state_machine = state_machine.fall();
+                            state_machine = state_machine.fall();
 
-                        loop {
                             match state_machine.current {
-                                State::Paragraph => output.write(TAG_P_C),
-                                State::Header(n, _) => {
-                                    output.write(b"</h");
-                                    output.push(n + 48);
-                                    output.push(b'>');
-                                }
                                 State::Intendation(_, mut buf) => {
                                     buf.inner.push(byte);
                                     state_machine.current = State::Intendation(true, buf);
-                                    break;
                                 }
-                                _ => {
-                                    output.push(byte);
-                                    break;
+
+                                _ => output.push(byte),
+                            }
+                        }
+
+                        State::Code(seen, count) => {
+                            if count == 1 {
+                                eprintln!("Unexpected new line in the middle of inline code.");
+                                // Close code block span tag and code tag
+                                output.write(TAG_CODEI_C);
+
+                                state_machine = state_machine.fall();
+
+                                while !state_machine.is_none() {
+                                    if state_machine.is_paragraph() {
+                                        output.write(TAG_P_C);
+                                    }
+
+                                    state_machine = state_machine.fall();
                                 }
+                            } else if count == 2 {
+                                if seen {
+                                    eprintln!("Unexpected number of code block keys. Maybe you meant to write 3?");
+                                }
+
+                                state_machine = state_machine.fall();
                             }
 
+                            output.push(byte);
+                        }
+
+                        State::Escape => {
+                            output.push(byte);
                             state_machine = state_machine.fall();
                         }
-                    }
 
-                    _ => output.push(byte),
-                },
+                        State::Link(ref ld) | State::Image(ref ld) => {
+                            println!("Warning: New lines in links and images are not supported. This may cripple your text.");
+                            if ld.is_alt() {
+                                output.push(b'[');
+                                output.write(&ld.alt);
+                                output.push(byte);
+                                state_machine = state_machine.fall();
+                            } else {
+                                output.push(b'[');
+                                output.write(&ld.alt);
+                                output.push(b']');
+                                output.push(b'(');
+                                output.write(&ld.link);
+                                output.push(byte);
+                                state_machine = state_machine.fall();
+                            }
+                        }
+
+                        State::Intendation(_, mut buf) => {
+                            buf.inner.push(byte);
+                            state_machine.current = State::Intendation(true, buf);
+                        }
+
+                        State::Exclamation => {
+                            output.push(b'!');
+                            state_machine = state_machine.fall();
+
+                            loop {
+                                match state_machine.current {
+                                    State::Paragraph => output.write(TAG_P_C),
+                                    State::Header(n, _) => {
+                                        output.write(b"</h");
+                                        output.push(n + 48);
+                                        output.push(b'>');
+                                    }
+                                    State::Intendation(_, mut buf) => {
+                                        buf.inner.push(byte);
+                                        state_machine.current = State::Intendation(true, buf);
+                                        break;
+                                    }
+                                    _ => {
+                                        output.push(byte);
+                                        break;
+                                    }
+                                }
+
+                                state_machine = state_machine.fall();
+                            }
+                        }
+
+                        State::LItem => {
+                            output.write(TAG_LI_C);
+                            output.push(byte);
+                            state_machine = state_machine.fall();
+                        }
+
+                        State::UList(true, _) => {
+                            output.push(byte);
+                            output.write(TAG_P_C);
+                            state_machine = state_machine.fall().fall();
+                        }
+
+                        State::Hor(3..) => {
+                            output.write(TAG_HR);
+                            output.push(byte);
+                            state_machine = state_machine.fall().fall();
+                        }
+
+                        _ => output.push(byte),
+                    }
+                }
 
                 b'`' => match state_machine.current {
                     State::None => {
                         output.write(TAG_P_O);
+                        println!("Code key increment to 1");
                         state_machine = state_machine
                             .rise(State::Paragraph)
                             .rise(State::Code(true, 1));
                     }
 
                     State::Code(ls, n) => {
+                        let x = n + 1;
                         if ls {
-                            state_machine.current = State::Code(ls, n + 1);
+                            state_machine.current = State::Code(ls, x);
+                             if x == 6 {
+                                // Close code blog div tag and code tag
+                                output.write(TAG_CODEB_C);
+                                state_machine = state_machine.fall();
+                            }
                         } else {
-                            match n {
-                                // Close inline code
-                                1 => {
-                                    // Close code blog span tag and code tag
-                                    output.write(TAG_CODEI_C);
-                                    state_machine = state_machine.fall();
-                                },
+                            if x == 2 {
+                                // Close code blog span tag and code tag
+                                output.write(TAG_CODEI_C);
+                                state_machine = state_machine.fall();
 
-                                3 => {
-                                    // Close code blog div tag and code tag
-                                    output.write(TAG_CODEB_C);
-                                    state_machine = state_machine.fall();
-                                },
-
-                                _ => println!("Warning: Predicting undefined behaviour because of unexpected code block length!"),
+                            } else {
+                                state_machine.current = State::Code(true, x);
                             }
                         }
                     }
@@ -1108,13 +1217,79 @@ impl MDS {
 
                     _ => output.push(byte),
                 },
+
+                b'-' => match state_machine.current {
+                    State::None => {
+                        output.write(TAG_P_O);
+                        state_machine = state_machine
+                            .rise(State::Paragraph)
+                            .rise(State::UList(true, false));
+                    }
+
+                    State::Intendation(exp, ref mut buf) => {
+                        if exp {
+                            output.write(TAG_INT_C);
+                            output.write(&buf.inner);
+                            state_machine = state_machine.fall();
+                        } else {
+                            output.write(&buf.inner);
+                            buf.inner.clear();
+                        }
+
+                        output.write(TAG_P_O);
+                        state_machine = state_machine
+                            .rise(State::Paragraph)
+                            .rise(State::UList(true, false));
+                    }
+
+                    State::UList(true, false) => state_machine.current = State::Hor(2),
+
+                    State::UList(true, true) => {
+                        output.write(TAG_UL_C);
+                        state_machine = state_machine
+                            .fall()
+                            .rise(State::Hor(2));
+                    }
+
+                    State::UList(false, p) => state_machine.current = State::UList(true, p),
+
+                    State::Hor(n) => state_machine.current = State::Hor(n+1),
+
+                    State::Escape => {
+                        output.push(byte);
+                        state_machine = state_machine.fall();
+                    }
+
+                    State::Exclamation => {
+                        output.push(b'!');
+                        output.push(byte);
+                        state_machine = state_machine.fall();
+                    }
+
+                    _ => output.push(byte),
+                }
+
                 _ => output.push(byte),
             }
+
+            column_counter += 1;
+        }
+
+        if state_machine.is_ulist() {
+            // Close ul tag
+            output.write(TAG_UL_C);
+            state_machine = state_machine.fall();
         }
 
         if state_machine.is_paragraph() {
             // Close p tag
             output.write(TAG_P_C);
+            state_machine = state_machine.fall();
+        }
+
+        if state_machine.is_intend() {
+            // Close intend div tag
+            output.write(TAG_INT_C);
         }
 
         output
@@ -1154,6 +1329,20 @@ impl MDS {
     fn is_paragraph(&self) -> bool {
         match self.current {
             State::Paragraph => true,
+            _ => false,
+        }
+    }
+
+    fn is_ulist(&self) -> bool {
+        match self.current {
+            State::UList(_, true) => true,
+            _ => false,
+        }
+    }
+
+    fn is_intend(&self) -> bool {
+        match self.current {
+            State::Intendation(_, _) => true,
             _ => false,
         }
     }
