@@ -1215,6 +1215,14 @@ impl MDS {
                         state_machine = state_machine.fall().rise(State::Underscore);
                     }
 
+                    State::Link(ref mut ld) | State::Image(ref mut ld) => {
+                        if ld.is_alt() {
+                            ld.alt.push(byte);
+                        } else {
+                            ld.link.push(byte);
+                        }
+                    }
+
                     _ => output.push(byte),
                 },
 
@@ -1264,6 +1272,14 @@ impl MDS {
                         output.push(b'!');
                         output.push(byte);
                         state_machine = state_machine.fall();
+                    }
+
+                    State::Link(ref mut ld) | State::Image(ref mut ld) => {
+                        if ld.is_alt() {
+                            ld.alt.push(byte);
+                        } else {
+                            ld.link.push(byte);
+                        }
                     }
 
                     _ => output.push(byte),
