@@ -954,30 +954,29 @@ impl MDS {
                 b'`' => match state_machine.current {
                     State::None => {
                         output.write(TAG_P_O);
+                        println!("Code key increment to 1");
                         state_machine = state_machine
                             .rise(State::Paragraph)
                             .rise(State::Code(true, 1));
                     }
 
                     State::Code(ls, n) => {
+                        let x = n + 1;
                         if ls {
-                            state_machine.current = State::Code(ls, n + 1);
+                            state_machine.current = State::Code(ls, x);
+                             if x == 6 {
+                                // Close code blog div tag and code tag
+                                output.write(TAG_CODEB_C);
+                                state_machine = state_machine.fall();
+                            }
                         } else {
-                            match n {
-                                // Close inline code
-                                1 => {
-                                    // Close code blog span tag and code tag
-                                    output.write(TAG_CODEI_C);
-                                    state_machine = state_machine.fall();
-                                },
+                            if x == 2 {
+                                // Close code blog span tag and code tag
+                                output.write(TAG_CODEI_C);
+                                state_machine = state_machine.fall();
 
-                                3 => {
-                                    // Close code blog div tag and code tag
-                                    output.write(TAG_CODEB_C);
-                                    state_machine = state_machine.fall();
-                                },
-
-                                _ => println!("Warning: Predicting undefined behaviour because of unexpected code block length!"),
+                            } else {
+                                state_machine.current = State::Code(true, x);
                             }
                         }
                     }
@@ -1221,7 +1220,7 @@ impl MDS {
 
                 b'-' => match state_machine.current {
                     State::None => {
-                        // output.write(TAG_P_O);
+                        output.write(TAG_P_O);
                         state_machine = state_machine
                             .rise(State::Paragraph)
                             .rise(State::UList(true, false));
@@ -1282,15 +1281,15 @@ impl MDS {
             state_machine = state_machine.fall();
         }
 
-        if state_machine.is_intend() {
-            // Close intend div tag
-            output.write(TAG_INT_C);
-            state_machine = state_machine.fall();
-        }
-
         if state_machine.is_paragraph() {
             // Close p tag
             output.write(TAG_P_C);
+            state_machine = state_machine.fall();
+        }
+
+        if state_machine.is_intend() {
+            // Close intend div tag
+            output.write(TAG_INT_C);
         }
 
         output
